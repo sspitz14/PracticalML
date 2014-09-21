@@ -1,0 +1,173 @@
+---
+title: "Practical ML Project"
+subtitle: "by: Steve Spitz"
+output: html_document
+---
+    
+<br/>
+<br/>
+<br/>
+### Method Summary
+1. Load the data
+2. Pre-process the data
+    + Remove variables with mostly missing values
+    + Partition data into training and test sets
+3. Model the training data
+    + Choose gbm because it is robust to missing values
+    + Examine overall performance, CV performance and variable importance
+4. Evaluate model performance on the test set
+    + Confusion matrix
+<br/>
+<br/>
+<br/>
+<br/>
+### 1. Load the data
+```{r import, cache=TRUE}
+# pml <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", stringsAsFactors=FALSE, na.strings=c("", " ", "NA"))
+
+pml <- read.csv("pml-training.csv", stringsAsFactors=FALSE, na.strings=c("", " ", "NA"))
+```
+The data are stored in a data frame called 'pml'.
+<br/>
+<br/>
+<br/>
+<br/>
+### 2. Pre-process the data
+<br/>
+<br/>
+#### Step 1: Break the data by data type
+```{r examine by class}
+classes <- sapply(pml, class)
+table(classes)
+pml.char <- pml[, classes == 'character' & !(names(pml) == 'classe')]
+pml.int  <- pml[, classes == 'integer']
+pml.num  <- pml[, classes == 'numeric']
+pml.dv   <- pml[, names(pml) == 'classe']
+```
+We see that the data consists of character, integer, and numeric predictors.
+<br/>
+<br/>
+#### Step 2: Investigate missing values (NA's)
+```{r count missing values, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+# 33 of 37 character columns are mostly missing values (NAs)
+sort(colSums(is.na(pml.char)), decr=T)
+charvars.na <- sum(sort(colSums(is.na(pml.char)), decr=T) > 0)
+
+# only 6 of 35 integer columns are mostly missing values (NAs)
+sort(colSums(is.na(pml.int)), decr=T) 
+intvars.na <- sum(sort(colSums(is.na(pml.int)), decr=T) > 0)
+
+# 61 of 88 numeric columns are mostly missing values (NAs)
+sort(colSums(is.na(pml.num)), decr=T)
+numvars.na <- sum(sort(colSums(is.na(pml.num)), decr=T) > 0)
+```
+We see that the variables with NA's have almost no non-NA rows.  Therefore, we should eliminate mostly NA variables. 
+<br/>
+`r charvars.na` of the character variables are almost entirely missing values.  
+`r intvars.na` of the character variables are almost entirely missing values.  
+`r numvars.na` of the character variables are almost entirely missing values.  
+<br/>
+<br/>
+#### Step 3: Exclude the columns that are almost entirely missing
+```{r remove NA vars, echo=TRUE, results='hide', message=FALSE}
+na.cap <- round(nrow(pml) * 0.5)
+pml.char.ok <- subset(pml.char, select = -which(colSums(is.na(pml.char)) > na.cap))
+pml.int.ok  <- subset(pml.int, select = -which(colSums(is.na(pml.int)) > na.cap))
+pml.num.ok  <- subset(pml.num, select = -which(colSums(is.na(pml.num)) > na.cap))
+rm(pml.char, pml.int, pml.num)
+```
+<br/>
+<br/>
+#### Step 4: Reassemble the predictor data
+```{r predictor reassemble, echo=TRUE, results='hide', message=FALSE}
+pml.ok <- cbind.data.frame(pml.char.ok, pml.int.ok, pml.num.ok)
+rm(pml.char.ok, pml.int.ok, pml.num.ok)
+```
+<br/>
+<br/>
+#### Step 5: Remove near zero variance columns
+```{r remove NZV vars, echo=TRUE, results='hide', message=FALSE}
+library(caret)
+nzv <- nearZeroVar(pml.ok)
+pml.ok <- pml.ok[, -(nzv)]
+```
+<br/>
+<br/>
+#### Step 6: Remove variables that probably aren't predictive
+```{r remove non-predictive vars, echo=TRUE, results='hide', message=FALSE}
+remove.cols <- names(pml.ok)[grepl("timest", names(pml.ok))]
+remove.cols <- c(remove.cols, "X", "user_name")
+pml.ok <- pml.ok[, !(names(pml.ok) %in% remove.cols)]
+```
+Here, we remove the timestamp variables, as well as the observation number variable and the user name variable.
+<br/>
+<br/>
+#### Step 7: Save the names of the remaining predictor columns
+```{r pred names, echo=TRUE, results='hide', message=FALSE}
+pml.predictors <- names(pml.ok)
+```
+<br/>
+<br/>
+#### Step 8: Append the classe target variable
+```{r append DV classe, echo=TRUE, results='hide', message=FALSE}
+pml.ok <- cbind.data.frame(pml.ok, classe=pml.dv)
+```
+<br/>
+<br/>
+#### Step 9: Partition the data into a training set and a test set
+```{r partition the data, cache=TRUE, echo=TRUE, results='hide', message=FALSE}
+set.seed(34595)
+trnIdx <- createDataPartition(pml.ok$classe, p=.6, list=FALSE)
+pml.train <- pml.ok[trnIdx, ]
+pml.test  <- pml.ok[-trnIdx, ]
+```
+<br/>
+<br/>
+<br/>
+<br/>
+### 3. Model the training data
+<br/>
+<br/>
+#### Step 1: Build a gradient boosting machine model using cross-validation
+```{r build gbm model, cache=TRUE, echo=TRUE, results='hide', message=FALSE}
+set.seed(135)
+ctrl <- trainControl(method = "cv", number=5, savePred=T, classProbs=T)
+pml.gbm <- train(classe~., data=pml.train, method = "gbm", trControl = ctrl)
+```
+<br/>
+<br/>
+#### Step 2: Look at the model performance and model parameters
+```{r model perf, cache=TRUE, echo=TRUE, message=FALSE}
+pml.gbm
+plot(pml.gbm)
+```
+The graph shows that the highest accuracy is achieved with 150 iterations and a maximum tree depth of 3.  A tree depth greater than two enables variable interactions.  
+<br/>
+<br/>
+#### Step 3: Examine the model's performance on the cross-validation folds
+```{r CV perf, echo=TRUE, message=FALSE}
+pml.gbm$resample
+```
+We see that accuracy across all CV folds is consistent.
+<br/>
+<br/>
+#### Step 4: Which variables are most important?
+```{r var imp, cache=TRUE, echo=TRUE, message=FALSE}
+gbmImp <- varImp(pml.gbm, scale = FALSE)
+gbmImp
+plot(gbmImp, top=20)
+```
+<br/>
+<br/>
+<br/>
+<br/>
+### 3. Evaluate model performance on the test set
+```{r out-of-sample perf, cache=TRUE, echo=TRUE, message=FALSE}
+pml.gbm.perf <- predict(pml.gbm, newdata=pml.test)
+# head(pml.gbm.perf)
+confusionMatrix(data=pml.gbm.perf, reference=pml.test$classe)
+# this is good performance
+```
+The model's performance on holdout data is excellent.  The confusion matrix shows that class predictions generally agree with the observed class values.
+
+
